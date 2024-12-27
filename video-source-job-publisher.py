@@ -43,18 +43,18 @@ def fetch_recording(recording:dict) -> str:
 def deduce_crop_settings(recording:dict) -> tuple:
    # if the recording is ER we know ABC will have no black borders, so no crop needed
    if recording['title']['eng'].startswith('ER'): 
-       return (0, 0, 0, 0)
+       return None # no crop arguments given to rkmppenc
    # else we block and run handbrake locally and wait for the user to enter the data manually
    exit_status = subprocess.call(["flatpak", "run", "--filesystem=/tmp", "fr.handbrake.ghb", "--device=/tmp/recording.ts"])
    print(f"Handbrake run: {exit_status}")  
    if exit_status > 0:
       return None 
-   left_crop = int(input('Left crop? (0 means no crop, -1 to shortcut zero crop) '))
+   left_crop = int(input('Left crop? (0 means no crop, -1 to omit crop arg to rkmppenc) '))
    if left_crop < 0:
       return None # omit crop settings in this case during rkmppenc run
-   top_crop = int(input('Top crop? (0 means no crop) '))
+   top_crop = int(input('Top crop? (0 means no crop, -1 to omit crop arg to rkmppenc) '))
    if top_crop < 0:
-      return (0, 0, 0, 0)
+      return None
    right_crop = int(input('Right crop? (0 means no crop) '))
    bottom_crop = int(input('Bottom crop? (0 means no crop) '))
    return (left_crop, top_crop, right_crop, bottom_crop)
@@ -100,7 +100,7 @@ def deduce_output_filename(recording:dict)-> str:
       episode_idx = series_episode.group(2)
       initial_out_fname = f"{eng_title}.s{season}e{episode_idx}.mkv"
    # strip special chars (if any) and replace with underscore
-   out_fname = re.sub(r'[^A-Za-z0-9_.,-]', '_', initial_out_fname).lower()
+   out_fname = re.sub(r'[^A-Za-z0-9_.,-]', '-', initial_out_fname).lower()
    print(f"Proposed output filename for transcoded recording is {out_fname}")
    return out_fname
  
@@ -126,7 +126,11 @@ def run_work(e:dict) -> None:
                                       "preferred_output_filename": deduce_output_filename(e) })
    os.unlink(local_file)
    # if we get here dont process this uuid again since it has been marked as to be transcoded
-   processed_jobs_db.execute(f'insert into uuid_recordings values ("{uuid}");')
+   with processed_jobs_db as con:
+      cursor = con.cursor()
+      result = cursor.execute(f'INSERT INTO uuid_recordings VALUES (:uuid);', { "uuid": uuid })
+      con.commit()
+      print(result)
    print(f"Finished processing {e['title']} (uuid {uuid})")
 
 
