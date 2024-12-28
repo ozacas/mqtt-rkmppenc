@@ -1,9 +1,5 @@
 #!/usr/bin/python3
-# usage:
-#   sudo pip3 install paho-mqtt
-#   install rkmppenc from github
-#   install ssh/scp if not already present :-)
-#   python3 run-rkmppenc.py 
+
 import os
 import json
 from time import sleep
@@ -40,6 +36,11 @@ def run_transcode(transcode_settings:dict, input_recording_fname=str, dest_folde
    if 'output_settings' in transcode_settings.keys() and transcode_settings['output_settings'] is not None:
        assert isinstance(transcode_settings['output_settings'], list)
        output_settings = ['--output-res', ':'.join([str(i) for i in transcode_settings['output_settings']])]
+   # HEVC output with de-interlacing and cropping is not supported currently, so we ensure interlacing is dropped if this is the case
+   if any(crop_settings) and interlace_settings is not None and len(interlace_settings) > 0:
+       interlace_settings = []
+
+   # now do the run..
    final_args = ["rkmppenc", "-c", "hevc", "--preset", "best", "--audio-codec", "aac", "--vbr", "700"] + ["-i", input_recording_fname, "-o", f"{dest_folder}/{transcode_settings['preferred_output_filename']}"] + crop_settings + interlace_settings + output_settings
    print(final_args)
    exit_status = subprocess.call(final_args)
