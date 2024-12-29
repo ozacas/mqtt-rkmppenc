@@ -26,16 +26,19 @@ def run_transcode(transcode_settings:dict, input_recording_fname=str, dest_folde
    assert isinstance(transcode_settings, dict)
    crop_settings = []
    print(transcode_settings)
-   if 'crop_settings' in transcode_settings.keys() and transcode_settings['crop_settings'] is not None:
+   ts_keys = transcode_settings.keys()
+   if 'crop_settings' in ts_keys and transcode_settings['crop_settings'] is not None:
        crop_settings = ["--crop", ':'.join([str(i) for i in transcode_settings['crop_settings']])]
    interlace_settings = []
-   if 'interlace_settings' in transcode_settings.keys() and transcode_settings['interlace_settings'] is not None:
+   if 'interlace_settings' in ts_keys and transcode_settings['interlace_settings'] is not None:
        assert isinstance(transcode_settings['interlace_settings'], list)
        interlace_settings = transcode_settings['interlace_settings']
    output_settings = []
-   if 'output_settings' in transcode_settings.keys() and transcode_settings['output_settings'] is not None:
-       assert isinstance(transcode_settings['output_settings'], list)
-       output_settings = ['--output-res', ':'.join([str(i) for i in transcode_settings['output_settings']])]
+   if 'output_res' in ts_keys and transcode_settings['output_res'] is not None:
+       res = transcode_settings['output_res']
+       assert isinstance(res, list)
+       assert len(res) == 2
+       output_settings = ['--output-res', ':'.join([str(i) for i in res])]
    # HEVC output with de-interlacing and cropping is not supported currently, so we ensure interlacing is dropped if this is the case
    if any(crop_settings) and interlace_settings is not None and len(interlace_settings) > 0:
        interlace_settings = []

@@ -15,6 +15,10 @@ from time import sleep
 from queue import Queue, Empty # note: must be thread safe
 import sqlite3
 
+class SkipJob(Exception):
+  def __init__(cls, *args, **kwargs):
+    super(cls, args, kwargs)
+
 done = False
 work_queue = Queue()
 processed_jobs_db = sqlite3.connect("tvheadend-recordings.db", check_same_thread=False)
@@ -49,7 +53,10 @@ def deduce_crop_settings(recording:dict) -> tuple:
    print(f"Handbrake run: {exit_status}")  
    if exit_status > 0:
       return None 
-   left_crop = int(input('Left crop? (0 means no crop, -1 to omit crop arg to rkmppenc) '))
+   left_str = input('Left crop? (0 means no crop, -1 to omit crop arg to rkmppenc, "s" to skip job) ')
+   if left_str.lower().startswith('s'):
+      raise SkipJob(f'User requested skipping of {recording}')
+   left_crop = int(left_str)
    if left_crop < 0:
       return None # omit crop settings in this case during rkmppenc run
    top_crop = int(input('Top crop? (0 means no crop, -1 to omit crop arg to rkmppenc) '))
@@ -108,30 +115,35 @@ def run_work(e:dict) -> None:
    uuid = e['uuid']
    assert len(uuid) > 16
    print(f"Downloading {e['title']} (uuid {uuid}) to local computer... please wait")
-   local_file    = fetch_recording(e)
-   print(f"Determining crop settings for {e['title']}")
-   crop_settings = deduce_crop_settings(e)
-   print(f"Crop settings are {crop_settings}")
-   print(f"Determining interlace settings for {e['title']}")
-   interlace_settings = deduce_interlace_settings(e) 
-   print(f"Interlace settings are {interlace_settings}")
-   print(f"Determining output resolution settings for {e['title']}")
-   output_res    = deduce_output_res(e) 
-   print(f"Output resolution explicitly set to {output_res}")
-   # recording is ok so we request it be transcoded with the specified settings (dont care who does it)
-   send_message(client, "rkmppenc", { "recording_file": e['filename'], 
+   local_file = None
+   try:
+      local_file    = fetch_recording(e)
+      print(f"Determining crop settings for {e['title']}")
+      crop_settings = deduce_crop_settings(e)
+      print(f"Crop settings are {crop_settings}")
+      print(f"Determining interlace settings for {e['title']}")
+      interlace_settings = deduce_interlace_settings(e) 
+      print(f"Interlace settings are {interlace_settings}")
+      print(f"Determining output resolution settings for {e['title']}")
+      output_res    = deduce_output_res(e) 
+      print(f"Output resolution explicitly set to {output_res}")
+      # recording is ok so we request it be transcoded with the specified settings (dont care who does it)
+      send_message(client, "rkmppenc", { "recording_file": e['filename'], 
                                       "crop_settings": crop_settings, 
                                       "interlace_settings": interlace_settings, 
                                       "output_res": output_res,
                                       "preferred_output_filename": deduce_output_filename(e) })
-   os.unlink(local_file)
-   # if we get here dont process this uuid again since it has been marked as to be transcoded
-   with processed_jobs_db as con:
-      cursor = con.cursor()
-      result = cursor.execute(f'INSERT INTO uuid_recordings VALUES (:uuid);', { "uuid": uuid })
-      con.commit()
-      print(result)
-   print(f"Finished processing {e['title']} (uuid {uuid})")
+   except SkipJob:
+      pass
+   finally:
+      os.unlink(local_file)
+      # if we get here dont process this uuid again since it has been marked as to be transcoded
+      with processed_jobs_db as con:
+         cursor = con.cursor()
+         result = cursor.execute(f'INSERT INTO uuid_recordings VALUES (:uuid);', { "uuid": uuid })
+         con.commit()
+         print(result)
+         print(f"Finished processing {e['title']} (uuid {uuid})")
 
 
 def done_before(uuid:str) -> bool:
