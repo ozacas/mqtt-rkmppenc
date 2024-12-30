@@ -40,13 +40,13 @@ First, start the script which will analyse the video file(s) on your workstation
 ~~~~
 my-workstation:~/mosquitto$ ls
 ca.crt  grok-encode-settings.py  hplappie.lan.crt  hplappie.lan.csr  hplappie.lan.key  tvheadend-recordings.db
-my-workstation:~/mosquitto$ python3 grok-encode-settings.py 
+my-workstation:~/mosquitto$ python3 video-source-job-publisher.py
 Subscribed to tvheadend finished recordings topic... now waiting for recordings...
 ~~~~
 
 (the database is used to record previously recorded programs so they wont be processed again. It is a single table, `uuid_recordings`, with a single column `uuid` to hold the program ID)
 
-Next, have tvheadend report the finished recordings using tvheadend-mqtt. For me, I use a docker container so can obtain the list of completed recordings via:
+Next, have tvheadend report the finished recordings using tvheadend-mqtt. For me, I use a docker container so I can publish a the list of completed recordings via:
 
 ~~~~
 my-workstation:~$ docker exec tvheadend-mqtt /app/bin/main publish finished
