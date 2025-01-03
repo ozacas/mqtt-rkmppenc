@@ -16,8 +16,8 @@ from queue import Queue, Empty # note: must be thread safe
 import sqlite3
 
 class SkipJob(Exception):
-  def __init__(cls, *args, **kwargs):
-    super(cls, args, kwargs)
+  def __init__(self, message):
+      super().__init__(message)
 
 done = False
 work_queue = Queue()
