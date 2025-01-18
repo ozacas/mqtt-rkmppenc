@@ -2,6 +2,7 @@
 
 import os
 import json
+import argparse
 from time import sleep
 import paho.mqtt.client as mqtt
 from queue import Queue, Empty # note: must be thread safe
@@ -54,13 +55,21 @@ def run_transcode(transcode_settings:dict, input_recording_fname=str, dest_folde
    print(f"{final_args} finished with exit status {exit_status}")
     
 if __name__ == "__main__":
+   a = argparse.ArgumentParser(description="Run transcoding jobs via rkmppenc from MQTT topic hosted on a broker")
+   a.add_argument("--mqtt-broker", help="Hostname of MQTT broker [opi2.lan] ", type=str, default="opi2.lan")
+   a.add_argument('--mqtt-port', help="Port of MQTT broker to user [8883] ", type=int, default=8883)
+   a.add_argument('--mqtt-topic', help="Topic to read jobs from [rkmppenc] ", type=str, default="rkmppenc")
+   a.add_argument("--cafile", help="Certificate Authority Certificate filename [ca.crt] ", type=str, default="ca.crt")
+   a.add_argument("--cert", help="Host certificate filename [host.crt] ", type=str, default="host.crt")
+   a.add_argument("--key", help="Host private key filename [host.key] ", type=str, default="host.key")
+   args = a.parse_args()
    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="run-rkmppenc", clean_session=False)
    client.on_message = on_message
    client.on_disconnect = on_disconnect
-   client.tls_set(ca_certs="ca.crt", certfile="rock-5b-plus.lan.crt", keyfile="rock-5b-plus.lan.key")
-   client.connect("opi2.lan", port=8883)
+   client.tls_set(ca_certs=args.cafile, certfile=args.cert, keyfile=args.key)
+   client.connect(args.mqtt_broker, port=args.mqtt_port)
    client.loop_start()
-   client.subscribe("rkmppenc")
+   client.subscribe(args.mqtt_topic)
    print("Subscribed to rkmppenc work topic... now waiting for transcode messages to arrive (indefinately)...")
    while not done:
       # slow process things in main thread one-at-a-time ie. user interaction since not permitted in callback thread
