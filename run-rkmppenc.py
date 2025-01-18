@@ -16,8 +16,12 @@ def on_message(client, userdata, message):
 def on_disconnect(client, userdata,rc=0):
    done = True
 
-def fetch_recording(recording:dict, ssh_host:str) -> str:
-   ssh_exit_status = subprocess.call(["scp", f"{ssh_host}:{recording['recording_file']}", "recording.ts"])
+def fetch_recording(recording:dict, ssh_user:str, ssh_host:str, folder_prefix:str) -> str:
+   assert 'recording_file' in recording.keys()
+   rec_basename = os.path.basename(recording['recording_file'])
+   ssh_args = ["scp", f"{ssh_user}@{ssh_host}:{folder_prefix}/{rec_basename}", "recording.ts"]
+   print(f"Fetching recording using: {ssh_args}")
+   ssh_exit_status = subprocess.call(ssh_args)
    if ssh_exit_status == 0:
        return "recording.ts"
    return None
@@ -53,7 +57,7 @@ if __name__ == "__main__":
    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="run-rkmppenc", clean_session=False)
    client.on_message = on_message
    client.on_disconnect = on_disconnect
-   client.tls_set(ca_certs="ca.crt", certfile="t6.lan.crt", keyfile="t6.lan.key")
+   client.tls_set(ca_certs="ca.crt", certfile="rock-5b-plus.lan.crt", keyfile="rock-5b-plus.lan.key")
    client.connect("opi2.lan", port=8883)
    client.loop_start()
    client.subscribe("rkmppenc")
@@ -64,7 +68,7 @@ if __name__ == "__main__":
          while True:
              r = work_queue.get(block=True, timeout=10)
              print(f"Transcoding recording {r}")
-             input_recording_fname = fetch_recording(r, 'opi2.lan')
+             input_recording_fname = fetch_recording(r, r.get('ssh_user', 'hts'), r.get('ssh_host', 'opi2.lan'), r.get('ssh_folder_prefix', 'recordings'))
              if input_recording_fname:
                 run_transcode(r, input_recording_fname)
              else:
