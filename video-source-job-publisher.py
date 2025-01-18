@@ -7,11 +7,12 @@ import os
 import sys
 import json
 import re
-import paho.mqtt.client as mqtt
-from paho.mqtt.enums import MQTTErrorCode
 import traceback
 import subprocess
 from time import sleep
+import argparse
+import paho.mqtt.client as mqtt
+from paho.mqtt.enums import MQTTErrorCode
 from queue import Queue, Empty # note: must be thread safe
 import sqlite3
 
@@ -31,7 +32,7 @@ def ok_recording(d:dict) -> bool:
       assert 'filename' in d.keys()
       assert 'title' in d.keys() and 'eng' in d['title']
       assert 'channelname' in d.keys() and len(d['channelname']) > 0
-      assert len(d['filename']) > 0 and d['filename'].startswith('/data')
+      assert len(d['filename']) > 0 
       assert 'complete' in d['status'].lower()
       return True
    except AssertionError as ae:
@@ -39,8 +40,15 @@ def ok_recording(d:dict) -> bool:
       print(f"Rejecting recording as does not satisfy required metadata for operations: {d}")
       return False
 
-def fetch_recording(recording:dict) -> str:
-   exit_status = subprocess.call(["scp", f"acas@opi2.lan:{recording['filename']}", "/tmp/recording.ts"])
+def fetch_recording(recording:dict, ssh_user: str, ssh_host:str, folder_prefix:str) -> str:
+   assert len(ssh_user) > 0
+   assert len(ssh_host) > 0
+   assert folder_prefix is not None
+   # we DO NOT use the filename field as given, instead we use a relative fetch for ~hts/recordings usually
+   base_filename = os.path.basename(recording['filename'])
+   ssh_args = ["scp", f"{ssh_user}@{ssh_host}:{folder_prefix}/{base_filename}", "/tmp/recording.ts"]
+   print(f"Fetching recording using: {ssh_args}")
+   exit_status = subprocess.call(ssh_args)
    assert exit_status == 0
    return "/tmp/recording.ts" 
 
@@ -111,13 +119,13 @@ def deduce_output_filename(recording:dict)-> str:
    print(f"Proposed output filename for transcoded recording is {out_fname}")
    return out_fname
  
-def run_work(e:dict) -> None: 
+def run_work(e:dict, ssh_user:str, ssh_host:str, folder_prefix:str) -> None: 
    uuid = e['uuid']
    assert len(uuid) > 16
    print(f"Downloading {e['title']} (uuid {uuid}) to local computer... please wait")
    local_file = None
    try:
-      local_file    = fetch_recording(e)
+      local_file    = fetch_recording(e, ssh_user, ssh_host, folder_prefix)
       print(f"Determining crop settings for {e['title']}")
       crop_settings = deduce_crop_settings(e)
       print(f"Crop settings are {crop_settings}")
@@ -128,11 +136,19 @@ def run_work(e:dict) -> None:
       output_res    = deduce_output_res(e) 
       print(f"Output resolution explicitly set to {output_res}")
       # recording is ok so we request it be transcoded with the specified settings (dont care who does it)
-      send_message(client, "rkmppenc", { "recording_file": e['filename'], 
-                                      "crop_settings": crop_settings, 
-                                      "interlace_settings": interlace_settings, 
-                                      "output_res": output_res,
-                                      "preferred_output_filename": deduce_output_filename(e) })
+      send_message(client, "rkmppenc", { 
+         # target filename
+         "recording_file": e['filename'], 
+         # rkmppenc settings as required
+         "crop_settings": crop_settings, 
+         "interlace_settings": interlace_settings, 
+         "output_res": output_res,
+         "preferred_output_filename": deduce_output_filename(e),
+         # since we have multiple servers the worker needs to know how to fetch the recording - trusted?
+         "ssh_user": ssh_user,
+         "ssh_host": ssh_host,
+         "ssh_folder_prefix": folder_prefix,
+      })
    except SkipJob:
       pass
    finally:
@@ -170,10 +186,15 @@ def on_message(client, userdata, message):
          done_recordings = done_recordings + 1
    print(f"Processed {done_recordings} recordings which were submitted to rkmppenc")
 
-def on_disconnect(client, userdata,rc=0):
+def on_disconnect(client, userdata, rc=0):
    done = True  # trigger main thread to go away eventually once work is done
 
 if __name__ == "__main__":
+   a = argparse.ArgumentParser(description='Read finished recordings from MQTT and submit work for rkmppenc to run')
+   a.add_argument('--ssh-user', help='SSH User to fetch recordings from [hts]', type=str, default='hts')
+   a.add_argument('--ssh-host', help='SSH hostname/IP to fetch recordings from [opi2.lan]', type=str, default='opi2.lan')
+   a.add_argument('--ssh-folder-prefix', help='Subfolder to fetch recordings from [recordings] ', type=str, default='recordings')
+   args = a.parse_args()
    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
    client.on_message = on_message
    client.on_disconnect = on_disconnect
@@ -190,7 +211,7 @@ if __name__ == "__main__":
          while True:
              r = work_queue.get(block=True, timeout=10) 
              print(f"Analysing recording {r}")
-             run_work(r)
+             run_work(r, ssh_user=args.ssh_user, ssh_host=args.ssh_host, folder_prefix=args.ssh_folder_prefix)
       except Empty:
          # not done, just nothing reported for now, keep going
          pass
