@@ -53,6 +53,7 @@ def run_transcode(transcode_settings:dict, input_recording_fname=str, dest_folde
    print(final_args)
    exit_status = subprocess.call(final_args)
    print(f"{final_args} finished with exit status {exit_status}")
+   os.unlink(input_recording_fname) 
     
 if __name__ == "__main__":
    a = argparse.ArgumentParser(description="Run transcoding jobs via rkmppenc from MQTT topic hosted on a broker")
