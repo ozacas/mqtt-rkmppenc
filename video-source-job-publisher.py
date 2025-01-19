@@ -119,7 +119,7 @@ def deduce_output_filename(recording:dict)-> str:
    print(f"Proposed output filename for transcoded recording is {out_fname}")
    return out_fname
  
-def run_work(e:dict, ssh_user:str, ssh_host:str, folder_prefix:str) -> None: 
+def run_work(e:dict, ssh_user:str, ssh_host:str, folder_prefix:str, topic_rkmppenc:str='rkmppenc') -> None: 
    uuid = e['uuid']
    assert len(uuid) > 16
    print(f"Downloading {e['title']} (uuid {uuid}) to local computer... please wait")
@@ -136,7 +136,7 @@ def run_work(e:dict, ssh_user:str, ssh_host:str, folder_prefix:str) -> None:
       output_res    = deduce_output_res(e) 
       print(f"Output resolution explicitly set to {output_res}")
       # recording is ok so we request it be transcoded with the specified settings (dont care who does it)
-      send_message(client, "rkmppenc", { 
+      send_message(client, topic_rkmppenc, { 
          # target filename
          "recording_file": e['filename'], 
          # rkmppenc settings as required
@@ -196,6 +196,8 @@ if __name__ == "__main__":
    a.add_argument('--ssh-folder-prefix', help='Subfolder to fetch recordings from [recordings] ', type=str, default='recordings')
    a.add_argument('--mqtt-broker', help='MQTT Broker hostname to use [opi2.lan] ', type=str, default='opi2.lan')
    a.add_argument('--mqtt-port', help='TCP port to use on broker [8883] ', type=int, default=8883)
+   a.add_argument('--topic-finished', help='Input recordings from tvheadend are posted to this topic [tvheadend/finished] ', type=str, default='tvheadend/finished')
+   a.add_argument('--topic-transcode', help='Transcode jobs are submitted to this topic [rkmppenc] ', type=str, default='rkmppenc')
    a.add_argument('--cafile', help='Certificate Authority certificate [ca.crt] ', type=str, default='ca.crt')
    a.add_argument('--cert', help='Host certificate to provide to MQTT Broker [hplappie.lan.crt] ', type=str, default='hplappie.lan.crt')
    a.add_argument('--key', help='Host private key [hplappie.lan.key] ', type=str, default='hplappie.lan.key')
@@ -206,7 +208,7 @@ if __name__ == "__main__":
    client.tls_set(ca_certs=args.cafile, certfile=args.cert, keyfile=args.key)
    client.connect(args.mqtt_broker, port=args.mqtt_port)
    client.loop_start()
-   client.subscribe("tvheadend/finished")
+   client.subscribe(args.topic_finished)
    print("Subscribed to tvheadend finished recordings topic... now waiting for recordings...")
    while not done:
       # no hurry here its a user-driven interactive workload
@@ -216,7 +218,7 @@ if __name__ == "__main__":
          while True:
              r = work_queue.get(block=True, timeout=10) 
              print(f"Analysing recording {r}")
-             run_work(r, ssh_user=args.ssh_user, ssh_host=args.ssh_host, folder_prefix=args.ssh_folder_prefix)
+             run_work(r, ssh_user=args.ssh_user, ssh_host=args.ssh_host, folder_prefix=args.ssh_folder_prefix, topic_rkmppenc=args.topic_transcode)
       except Empty:
          # not done, just nothing reported for now, keep going
          pass
