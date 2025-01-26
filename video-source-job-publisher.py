@@ -52,6 +52,19 @@ def fetch_recording(recording:dict, ssh_user: str, ssh_host:str, folder_prefix:s
    assert exit_status == 0
    return "/tmp/recording.ts" 
 
+def get_int(prompt:str) -> int:
+   ok = False
+   while not ok:
+       input_str = input(prompt or 'Input integer number: ')
+       if input_str.lower().startswith('s'):
+          raise SkipJob(f'User requested skipping of {recording}')
+       try:
+          input_crop = int(left_str)
+          return input_crop
+       except ValueError:
+          print(f'You must supply a valid integer - not {input_str}')
+          pass # try again
+   
 def deduce_crop_settings(recording:dict) -> tuple:
    # if the recording is ER we know ABC will have no black borders, so no crop needed
    if recording['title']['eng'].startswith('ER'): 
@@ -61,17 +74,14 @@ def deduce_crop_settings(recording:dict) -> tuple:
    print(f"Handbrake run: {exit_status}")  
    if exit_status > 0:
       return None 
-   left_str = input('Left crop? (0 means no crop, -1 to omit crop arg to rkmppenc, "s" to skip job) ')
-   if left_str.lower().startswith('s'):
-      raise SkipJob(f'User requested skipping of {recording}')
-   left_crop = int(left_str)
+   left_crop = get_int("Left crop? (0 means no pixels cropped from left, -1 to omit crop altogether, 's' to skip job) ")
    if left_crop < 0:
       return None # omit crop settings in this case during rkmppenc run
-   top_crop = int(input('Top crop? (0 means no crop, -1 to omit crop arg to rkmppenc) '))
+   top_crop = get_int("Top crop? (0 means no crop, -1 to omit crop altogether, 's' to skip job) ")
    if top_crop < 0:
       return None
-   right_crop = int(input('Right crop? (0 means no crop) '))
-   bottom_crop = int(input('Bottom crop? (0 means no crop) '))
+   right_crop = get_int('Right crop? (0 means no crop) ')
+   bottom_crop = get_int('Bottom crop? (0 means no crop) ')
    return (left_crop, top_crop, right_crop, bottom_crop)
 
 def deduce_interlace_settings(recording:dict) -> tuple:
@@ -119,13 +129,12 @@ def deduce_output_filename(recording:dict)-> str:
    print(f"Proposed output filename for transcoded recording is {out_fname}")
    return out_fname
  
-def run_work(e:dict, ssh_user:str, ssh_host:str, folder_prefix:str, topic_rkmppenc:str='rkmppenc') -> None: 
+def run_work(e:dict, ssh_user:str, ssh_host:str, folder_prefix:str, topic_rkmppenc:str='rkmppenc', vbr:int=700) -> None: 
    uuid = e['uuid']
    assert len(uuid) > 16
    print(f"Downloading {e['title']} (uuid {uuid}) to local computer... please wait")
-   local_file = None
+   local_file    = fetch_recording(e, ssh_user, ssh_host, folder_prefix)
    try:
-      local_file    = fetch_recording(e, ssh_user, ssh_host, folder_prefix)
       print(f"Determining crop settings for {e['title']}")
       crop_settings = deduce_crop_settings(e)
       print(f"Crop settings are {crop_settings}")
@@ -148,6 +157,7 @@ def run_work(e:dict, ssh_user:str, ssh_host:str, folder_prefix:str, topic_rkmppe
          "ssh_user": ssh_user,
          "ssh_host": ssh_host,
          "ssh_folder_prefix": folder_prefix,
+         "vbr": vbr
       })
    except SkipJob:
       pass
@@ -201,6 +211,7 @@ if __name__ == "__main__":
    a.add_argument('--cafile', help='Certificate Authority certificate [ca.crt] ', type=str, default='ca.crt')
    a.add_argument('--cert', help='Host certificate to provide to MQTT Broker [hplappie.lan.crt] ', type=str, default='hplappie.lan.crt')
    a.add_argument('--key', help='Host private key [hplappie.lan.key] ', type=str, default='hplappie.lan.key')
+   a.add_argument('--vbr', help='Variable bitrate (kb/s) to use [700] ', type=int, default=700) 
    args = a.parse_args()
    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
    client.on_message = on_message
@@ -218,7 +229,7 @@ if __name__ == "__main__":
          while True:
              r = work_queue.get(block=True, timeout=10) 
              print(f"Analysing recording {r}")
-             run_work(r, ssh_user=args.ssh_user, ssh_host=args.ssh_host, folder_prefix=args.ssh_folder_prefix, topic_rkmppenc=args.topic_transcode)
+             run_work(r, ssh_user=args.ssh_user, ssh_host=args.ssh_host, folder_prefix=args.ssh_folder_prefix, topic_rkmppenc=args.topic_transcode, vbr=args.vbr)
       except Empty:
          # not done, just nothing reported for now, keep going
          pass
