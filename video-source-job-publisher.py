@@ -57,9 +57,9 @@ def get_int(prompt:str) -> int:
    while not ok:
        input_str = input(prompt or 'Input integer number: ')
        if input_str.lower().startswith('s'):
-          raise SkipJob(f'User requested skipping of {recording}')
+          raise SkipJob(f'User requested skipping of job')
        try:
-          input_crop = int(left_str)
+          input_crop = int(input_str)
           return input_crop
        except ValueError:
           print(f'You must supply a valid integer - not {input_str}')
