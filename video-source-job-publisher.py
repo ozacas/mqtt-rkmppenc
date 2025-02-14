@@ -84,7 +84,21 @@ def deduce_crop_settings(recording:dict) -> tuple:
    bottom_crop = get_int('Bottom crop? (0 means no crop) ')
    return (left_crop, top_crop, right_crop, bottom_crop)
 
-def deduce_interlace_settings(recording:dict) -> tuple:
+def deduce_interlace_settings(recording:dict, local_file:str) -> tuple:
+   # per https://stackoverflow.com/questions/24945378/progressive-or-interlace-detection-in-ffmpeg
+   ffprobe_results = subprocess.run(["ffprobe", "-v", "quiet", "-select_streams", "v", "-show_entries", "stream=codec_name,height,width,pix_fmt,field_order", "-of", "csv=p=0", local_file], capture_output=True)
+   if ffprobe_results.returncode == 0:
+      for line in ffprobe_results.stdout.decode('utf-8').split("\n"):
+         trimmed_line = line.rstrip()
+         if ",tb" in trimmed_line:
+            return ("--vpp-yadif", "--interlace", "tff")
+         elif ",bt" in trimmed_line:
+            return ("--vpp-yadif", "--interlace", "bff")
+      # DONT FALLTHRU... assume progressive to avoid performance hit in unknown case
+      return None
+   else:
+      print(f"Failed to run ffprobe... using channel heuristic for deinterlace detection instead")
+      # FALLTHRU
    channel_name = recording['channelname'].lower() 
    if '9gem' in channel_name or '9go' in channel_name:
        return ("--vpp-yadif", "--interlace", "tff") 
@@ -139,7 +153,7 @@ def run_work(e:dict, ssh_user:str, ssh_host:str, folder_prefix:str, topic_rkmppe
       crop_settings = deduce_crop_settings(e)
       print(f"Crop settings are {crop_settings}")
       print(f"Determining interlace settings for {e['title']}")
-      interlace_settings = deduce_interlace_settings(e) 
+      interlace_settings = deduce_interlace_settings(e, local_file) 
       print(f"Interlace settings are {interlace_settings}")
       print(f"Determining output resolution settings for {e['title']}")
       output_res    = deduce_output_res(e) 
