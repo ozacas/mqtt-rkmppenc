@@ -12,7 +12,10 @@ done = False
 work_queue = Queue()
 
 def on_message(client, userdata, message):
-   work_queue.put(json.loads(message.payload))
+   try:
+      work_queue.put(json.loads(message.payload, strict=False))
+   except json.decoder.JSONDecodeError:
+      print(f"Encountered invalid JSON: {message} ... ignoring")
 
 def on_disconnect(client, userdata,rc=0):
    done = True
