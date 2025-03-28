@@ -7,6 +7,13 @@ from time import sleep
 import paho.mqtt.client as mqtt
 from queue import Queue, Empty # note: must be thread safe
 import subprocess
+import re
+
+# list of resolutions to perform upscaling on along with corresponding rkmppenc options (if not provided by server-side)
+UPSCALE_RES = {
+  "720x576": ["--output-res", "1280:720,preserve_aspect_ratio=increase"],
+  "720x424": ["--output-res", "1200:720,preserve_aspect_ratio=increase"]
+}
 
 done = False
 work_queue = Queue()
@@ -30,6 +37,18 @@ def fetch_recording(recording:dict, ssh_user:str, ssh_host:str, folder_prefix:st
        return "recording.ts"
    return None
 
+def upscale_settings(local_file: str) -> list:
+   ffprobe_results = subprocess.run(["ffprobe", "-v", "quiet", "-select_streams", "v", "-show_entries", "stream=codec_name,height,width,pix_fmt,field_order", "-of", "csv=p=0", local_file], capture_output=True)
+   if ffprobe_results.returncode == 0:
+      for line in ffprobe_results.stdout.decode('utf-8').split("\n"):
+         m = re.match(r"^(\S+),(\d+),(\d+),",  line)
+         if m:
+            key = f"{m.group(2)}x{m.group(3)}"
+            if key in UPSCALE_RES:
+               print(f"Upscaling video output as requested for {key}")
+               return UPSCALE_RES[key]
+   return []
+ 
 def run_transcode(transcode_settings:dict, input_recording_fname=str, dest_folder='/nfs') -> None:
    assert isinstance(transcode_settings, dict)
    crop_settings = []
@@ -42,17 +61,22 @@ def run_transcode(transcode_settings:dict, input_recording_fname=str, dest_folde
        assert isinstance(transcode_settings['interlace_settings'], list)
        interlace_settings = transcode_settings['interlace_settings']
    output_settings = []
+   upscale_settings = []
    if 'output_res' in ts_keys and transcode_settings['output_res'] is not None:
        res = transcode_settings['output_res']
        assert isinstance(res, list)
        assert len(res) == 2
        output_settings = ['--output-res', ':'.join([str(i) for i in res])]
+   else:
+       # upscale_settings must only be set if output_settings is empty
+       upscale_settings.extend(upscale_settings(input_recording_fname))
+        
    # HEVC output with de-interlacing and cropping is not supported currently, so we ensure interlacing is dropped if this is the case
    if any(crop_settings) and interlace_settings is not None and len(interlace_settings) > 0:
        interlace_settings = []
 
    # now do the run..
-   final_args = ["rkmppenc", "-c", "hevc", "--preset", "best", "--audio-codec", "aac", "--vbr", "700"] + ["-i", input_recording_fname, "-o", f"{dest_folder}/{transcode_settings['preferred_output_filename']}"] + crop_settings + interlace_settings + output_settings
+   final_args = ["rkmppenc", "-c", "hevc", "--preset", "best", "--audio-codec", "aac", "--vbr", "700"] + ["-i", input_recording_fname, "-o", f"{dest_folder}/{transcode_settings['preferred_output_filename']}"] + crop_settings + interlace_settings + output_settings + upscale_settings
    print(final_args)
    exit_status = subprocess.call(final_args)
    print(f"{final_args} finished with exit status {exit_status}")
@@ -85,7 +109,7 @@ if __name__ == "__main__":
              if input_recording_fname:
                 run_transcode(r, input_recording_fname)
              else:
-                print(f"Unable to fetch recording {r}... ignoring but continuing to process others")
+                print(f"Unable to fetch recording {r}... ignoring but continuing to process remaining recordings")
       except Empty:
          # not done, just nothing reported for now, keep going
          pass
