@@ -12,7 +12,7 @@ import re
 # list of resolutions to perform upscaling on along with corresponding rkmppenc options (if not provided by server-side)
 UPSCALE_RES = {
   "720x576": ["--output-res", "1280:720,preserve_aspect_ratio=increase"],
-  "720x424": ["--output-res", "1200:720,preserve_aspect_ratio=increase"]
+  "720x424": ["--output-res", "1222:720,preserve_aspect_ratio=increase"]
 }
 
 done = False
@@ -37,7 +37,7 @@ def fetch_recording(recording:dict, ssh_user:str, ssh_host:str, folder_prefix:st
        return "recording.ts"
    return None
 
-def upscale_settings(local_file: str) -> list:
+def compute_upscale_settings(local_file: str) -> list:
    ffprobe_results = subprocess.run(["ffprobe", "-v", "quiet", "-select_streams", "v", "-show_entries", "stream=codec_name,height,width,pix_fmt,field_order", "-of", "csv=p=0", local_file], capture_output=True)
    if ffprobe_results.returncode == 0:
       for line in ffprobe_results.stdout.decode('utf-8').split("\n"):
@@ -69,7 +69,7 @@ def run_transcode(transcode_settings:dict, input_recording_fname=str, dest_folde
        output_settings = ['--output-res', ':'.join([str(i) for i in res])]
    else:
        # upscale_settings must only be set if output_settings is empty
-       upscale_settings.extend(upscale_settings(input_recording_fname))
+       upscale_settings.extend(compute_upscale_settings(input_recording_fname))
         
    # HEVC output with de-interlacing and cropping is not supported currently, so we ensure interlacing is dropped if this is the case
    if any(crop_settings) and interlace_settings is not None and len(interlace_settings) > 0:
