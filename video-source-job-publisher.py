@@ -210,7 +210,7 @@ def on_message(client, userdata, message):
          done_recordings = done_recordings + 1
    print(f"Processed {done_recordings} recordings which were submitted to rkmppenc")
 
-def on_disconnect(client, userdata, rc=0):
+def on_disconnect(client, userdata, flags, rc, properties):
    done = True  # trigger main thread to go away eventually once work is done
 
 if __name__ == "__main__":
@@ -221,7 +221,7 @@ if __name__ == "__main__":
    a.add_argument('--mqtt-broker', help='MQTT Broker hostname to use [opi2.lan] ', type=str, default='opi2.lan')
    a.add_argument('--mqtt-port', help='TCP port to use on broker [8883] ', type=int, default=8883)
    a.add_argument('--topic-finished', help='Input recordings from tvheadend are posted to this topic [tvheadend/finished] ', type=str, default='tvheadend/finished')
-   a.add_argument('--topic-transcode', help='Transcode jobs are submitted to this topic [rkmppenc] ', type=str, default='rkmppenc')
+   a.add_argument('--topic-transcode', help='Transcode jobs are submitted to this topic [$share/video/mpp/#] ', type=str, default='$share/video/mpp/#')
    a.add_argument('--cafile', help='Certificate Authority certificate [ca.crt] ', type=str, default='ca.crt')
    a.add_argument('--cert', help='Host certificate to provide to MQTT Broker [hplappie.lan.crt] ', type=str, default='hplappie.lan.crt')
    a.add_argument('--key', help='Host private key [hplappie.lan.key] ', type=str, default='hplappie.lan.key')
