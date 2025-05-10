@@ -12,7 +12,7 @@ import subprocess
 from time import sleep
 import argparse
 import paho.mqtt.client as mqtt
-from paho.mqtt.enums import MQTTErrorCode
+from paho.mqtt.enums import MQTTErrorCode, MQTTProtocolVersion
 from queue import Queue, Empty # note: must be thread safe
 import sqlite3
 
@@ -48,7 +48,13 @@ def fetch_recording(recording:dict, ssh_user: str, ssh_host:str, folder_prefix:s
    base_filename = os.path.basename(recording['filename'])
    ssh_args = ["scp", f"{ssh_user}@{ssh_host}:{folder_prefix}/{base_filename}", "/tmp/recording.ts"]
    print(f"Fetching recording using: {ssh_args}")
-   exit_status = subprocess.call(ssh_args)
+   for retry in range(3):
+      exit_status = subprocess.call(ssh_args)
+      if exit_status == 0:
+         break
+      else:
+         print(f"Failed to recording {recording} (retry #{retry})- sleeping for 30s")
+         sleep(30)
    assert exit_status == 0
    return "/tmp/recording.ts" 
 
@@ -221,13 +227,13 @@ if __name__ == "__main__":
    a.add_argument('--mqtt-broker', help='MQTT Broker hostname to use [opi2.lan] ', type=str, default='opi2.lan')
    a.add_argument('--mqtt-port', help='TCP port to use on broker [8883] ', type=int, default=8883)
    a.add_argument('--topic-finished', help='Input recordings from tvheadend are posted to this topic [tvheadend/finished] ', type=str, default='tvheadend/finished')
-   a.add_argument('--topic-transcode', help='Transcode jobs are submitted to this topic [$share/video/mpp/#] ', type=str, default='$share/video/mpp/#')
+   a.add_argument('--topic-transcode', help='Transcode jobs are submitted to this topic [$share/video/mpp] ', type=str, default='$share/video/mpp')
    a.add_argument('--cafile', help='Certificate Authority certificate [ca.crt] ', type=str, default='ca.crt')
    a.add_argument('--cert', help='Host certificate to provide to MQTT Broker [hplappie.lan.crt] ', type=str, default='hplappie.lan.crt')
    a.add_argument('--key', help='Host private key [hplappie.lan.key] ', type=str, default='hplappie.lan.key')
    a.add_argument('--vbr', help='Variable bitrate (kb/s) to use [700] ', type=int, default=700) 
    args = a.parse_args()
-   client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+   client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, protocol=MQTTProtocolVersion.MQTTv5)
    client.on_message = on_message
    client.on_disconnect = on_disconnect
    client.tls_set(ca_certs=args.cafile, certfile=args.cert, keyfile=args.key)
