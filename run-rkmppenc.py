@@ -24,7 +24,7 @@ def on_message(client, userdata, message):
    except json.decoder.JSONDecodeError:
       print(f"Encountered invalid JSON: {message} ... ignoring")
 
-def on_disconnect(client, userdata,rc=0):
+def on_disconnect(client, userdata, flags, rc, props):
    done = True
 
 def fetch_recording(recording:dict, ssh_user:str, ssh_host:str, folder_prefix:str) -> str:
@@ -86,19 +86,19 @@ if __name__ == "__main__":
    a = argparse.ArgumentParser(description="Run transcoding jobs via rkmppenc from MQTT topic hosted on a broker")
    a.add_argument("--mqtt-broker", help="Hostname of MQTT broker [opi2.lan] ", type=str, default="opi2.lan")
    a.add_argument('--mqtt-port', help="Port of MQTT broker to user [8883] ", type=int, default=8883)
-   a.add_argument('--mqtt-topic', help="Topic to read jobs from [rkmppenc] ", type=str, default="rkmppenc")
+   a.add_argument('--mqtt-topic', help="Topic to read jobs from [$share/video/mpp/#] ", type=str, default="$share/video/mpp/#")
    a.add_argument("--cafile", help="Certificate Authority Certificate filename [ca.crt] ", type=str, default="ca.crt")
    a.add_argument("--cert", help="Host certificate filename [host.crt] ", type=str, default="host.crt")
    a.add_argument("--key", help="Host private key filename [host.key] ", type=str, default="host.key")
    args = a.parse_args()
-   client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="run-rkmppenc", clean_session=False)
+   client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"rkmppenc{os.getpid()}", clean_session=False)
    client.on_message = on_message
    client.on_disconnect = on_disconnect
    client.tls_set(ca_certs=args.cafile, certfile=args.cert, keyfile=args.key)
    client.connect(args.mqtt_broker, port=args.mqtt_port)
    client.loop_start()
    client.subscribe(args.mqtt_topic)
-   print("Subscribed to rkmppenc work topic... now waiting for transcode messages to arrive (indefinately)...")
+   print(f"Subscribed to {args.mqtt_topic}... now waiting for transcode jobs (indefinately)...")
    while not done:
       # slow process things in main thread one-at-a-time ie. user interaction since not permitted in callback thread
       try:
