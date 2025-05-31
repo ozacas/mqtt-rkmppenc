@@ -5,6 +5,7 @@ import json
 import argparse
 from time import sleep
 import paho.mqtt.client as mqtt
+from paho.mqtt.enums import MQTTProtocolVersion, MQTTErrorCode
 from queue import Queue, Empty # note: must be thread safe
 import subprocess
 import re
@@ -17,12 +18,28 @@ UPSCALE_RES = {
 
 done = False
 work_queue = Queue()
+share_topic = None
 
 def on_message(client, userdata, message):
+   if not message.topic.startswith("$SYS"):
+      print(message.topic)
    try:
-      work_queue.put(json.loads(message.payload, strict=False))
+      if 'mpp' in message.topic:
+         work_queue.put(json.loads(message.payload, strict=False))
    except json.decoder.JSONDecodeError:
       print(f"Encountered invalid JSON: {message} ... ignoring")
+
+def on_connect(client, userdata, flags, reason_code, properties):
+    print(f"Connected with result code {reason_code}")
+    client.subscribe("$SYS/#")
+    if share_topic:
+       print(f"Subscribing to share topic: {share_topic}")
+       t = client.subscribe(share_topic)
+       assert t[0] == MQTTErrorCode.MQTT_ERR_SUCCESS
+       if share_topic.startswith('$'): # shared subscriptions not supported by paho mqtt client
+          non_shared_topic_filter = share_topic.split('/', maxsplit=1)[-1]
+          print(f"Registering message callback filter for {share_topic} as {non_shared_topic_filter}")
+          client.message_callback_add(non_shared_topic_filter, on_message)
 
 def on_disconnect(client, userdata, flags, rc, props):
    done = True
@@ -86,24 +103,29 @@ if __name__ == "__main__":
    a = argparse.ArgumentParser(description="Run transcoding jobs via rkmppenc from MQTT topic hosted on a broker")
    a.add_argument("--mqtt-broker", help="Hostname of MQTT broker [opi2.lan] ", type=str, default="opi2.lan")
    a.add_argument('--mqtt-port', help="Port of MQTT broker to user [8883] ", type=int, default=8883)
-   a.add_argument('--mqtt-topic', help="Topic to read jobs from [$share/video/mpp/#] ", type=str, default="$share/video/mpp/#")
+   a.add_argument('--mqtt-topic', help="Topic to read jobs from [$share/rkmppenc/video/mpp] ", type=str, default='$share/rkmppenc/video/mpp')
    a.add_argument("--cafile", help="Certificate Authority Certificate filename [ca.crt] ", type=str, default="ca.crt")
    a.add_argument("--cert", help="Host certificate filename [host.crt] ", type=str, default="host.crt")
    a.add_argument("--key", help="Host private key filename [host.key] ", type=str, default="host.key")
    args = a.parse_args()
-   client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"rkmppenc{os.getpid()}", clean_session=False)
+   share_topic = args.mqtt_topic
+   client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"rkmppenc", protocol=mqtt.MQTTv5)
+      # FALLTHRU
    client.on_message = on_message
+   client.on_connect = on_connect
    client.on_disconnect = on_disconnect
    client.tls_set(ca_certs=args.cafile, certfile=args.cert, keyfile=args.key)
    client.connect(args.mqtt_broker, port=args.mqtt_port)
    client.loop_start()
-   client.subscribe(args.mqtt_topic)
    print(f"Subscribed to {args.mqtt_topic}... now waiting for transcode jobs (indefinately)...")
    while not done:
       # slow process things in main thread one-at-a-time ie. user interaction since not permitted in callback thread
       try:
          while True:
              r = work_queue.get(block=True, timeout=10)
+             if not isinstance(r, dict):
+                 print(f"ERROR: got recording {r} but not expected JSON type... skipping")
+                 continue
              print(f"Transcoding recording {r}")
              input_recording_fname = fetch_recording(r, r.get('ssh_user', 'hts'), r.get('ssh_host', 'opi2.lan'), r.get('ssh_folder_prefix', 'recordings'))
              if input_recording_fname:
