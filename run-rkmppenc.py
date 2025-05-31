@@ -109,7 +109,7 @@ if __name__ == "__main__":
    a.add_argument("--key", help="Host private key filename [host.key] ", type=str, default="host.key")
    args = a.parse_args()
    share_topic = args.mqtt_topic
-   client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"rkmppenc", protocol=mqtt.MQTTv5)
+   client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"rkmppenc{os.getpid()}", protocol=mqtt.MQTTv5)
       # FALLTHRU
    client.on_message = on_message
    client.on_connect = on_connect
