@@ -12,7 +12,7 @@ import subprocess
 from time import sleep
 import argparse
 import paho.mqtt.client as mqtt
-from paho.mqtt.enums import MQTTErrorCode, MQTTProtocolVersion
+from paho.mqtt.enums import MQTTErrorCode
 from queue import Queue, Empty # note: must be thread safe
 import sqlite3
 
@@ -20,8 +20,8 @@ class SkipJob(Exception):
   def __init__(self, message):
       super().__init__(message)
 
-done = False
 work_queue = Queue()
+is_pending = set()
 processed_jobs_db = sqlite3.connect("tvheadend-recordings.db", check_same_thread=False)
 
 def ok_recording(d:dict) -> bool:
@@ -149,7 +149,7 @@ def deduce_output_filename(recording:dict)-> str:
    print(f"Proposed output filename for transcoded recording is {out_fname}")
    return out_fname
  
-def run_work(e:dict, ssh_user:str, ssh_host:str, folder_prefix:str, topic_rkmppenc:str='rkmppenc', vbr:int=700) -> None: 
+def run_work(e:dict, ssh_user:str, ssh_host:str, folder_prefix:str, topic_rkmppenc:str, vbr:int=700) -> None: 
    uuid = e['uuid']
    assert len(uuid) > 16
    print(f"Downloading {e['title']} (uuid {uuid}) to local computer... please wait")
@@ -179,6 +179,7 @@ def run_work(e:dict, ssh_user:str, ssh_host:str, folder_prefix:str, topic_rkmppe
          "ssh_folder_prefix": folder_prefix,
          "vbr": vbr
       })
+      is_pending.discard(e['uuid'])
    except SkipJob:
       pass
    finally:
@@ -201,6 +202,11 @@ def done_before(uuid:str) -> bool:
    return (t[0] > 0)
 
 def on_message(client, userdata, message):
+   if 'tvheadend' not in message.topic:
+      # disabled due to verbosity
+      #print(f"Ignoring message from {message.topic}")
+      return
+
    json_str = message.payload.decode('utf-8') 
    assert isinstance(json_str, str)
    d = json.loads(json_str) 
@@ -211,47 +217,60 @@ def on_message(client, userdata, message):
    print(f'Finished recording message: found {len(l)} completed recordings')
    done_recordings = 0
    for idx, e in enumerate(l):
+      if e['uuid'] in is_pending:
+         print(f"{e['uuid']} is already a pending job... ignored")
+         continue
       if ok_recording(e) and not done_before(e['uuid']):
          work_queue.put(e)
+         is_pending.add(e['uuid'])
          done_recordings = done_recordings + 1
    print(f"Processed {done_recordings} recordings which were submitted to rkmppenc")
 
-def on_disconnect(client, userdata, flags, rc, properties):
-   done = True  # trigger main thread to go away eventually once work is done
+def on_connect(client, userdata, flags, rc, properties):
+   print(f"Connected with result code {rc}")
+   client.subscribe("$SYS/#")
+
 
 if __name__ == "__main__":
    a = argparse.ArgumentParser(description='Read finished recordings from MQTT and submit work for rkmppenc to run')
    a.add_argument('--ssh-user', help='SSH User to fetch recordings from [hts]', type=str, default='hts')
-   a.add_argument('--ssh-host', help='SSH hostname/IP to fetch recordings from [opi2.lan]', type=str, default='opi2.lan')
+   a.add_argument('--ssh-host', help='SSH hostname/IP to fetch recordings from [opi2.lan,rock-5b-plus.lan]', type=str, default='opi2.lan,rock-5b-plus.lan')
    a.add_argument('--ssh-folder-prefix', help='Subfolder to fetch recordings from [recordings] ', type=str, default='recordings')
    a.add_argument('--mqtt-broker', help='MQTT Broker hostname to use [opi2.lan] ', type=str, default='opi2.lan')
    a.add_argument('--mqtt-port', help='TCP port to use on broker [8883] ', type=int, default=8883)
    a.add_argument('--topic-finished', help='Input recordings from tvheadend are posted to this topic [tvheadend/finished] ', type=str, default='tvheadend/finished')
-   a.add_argument('--topic-transcode', help='Transcode jobs are submitted to this topic [$share/video/mpp] ', type=str, default='$share/video/mpp')
+   a.add_argument('--topic-transcode', help='Transcode jobs are submitted to this topic [video/mpp] ', type=str, default='video/mpp')
    a.add_argument('--cafile', help='Certificate Authority certificate [ca.crt] ', type=str, default='ca.crt')
    a.add_argument('--cert', help='Host certificate to provide to MQTT Broker [hplappie.lan.crt] ', type=str, default='hplappie.lan.crt')
    a.add_argument('--key', help='Host private key [hplappie.lan.key] ', type=str, default='hplappie.lan.key')
    a.add_argument('--vbr', help='Variable bitrate (kb/s) to use [700] ', type=int, default=700) 
    args = a.parse_args()
-   client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, protocol=MQTTProtocolVersion.MQTTv5)
+   client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, protocol=mqtt.MQTTv5)
    client.on_message = on_message
-   client.on_disconnect = on_disconnect
+   client.on_connect = on_connect
    client.tls_set(ca_certs=args.cafile, certfile=args.cert, keyfile=args.key)
    client.connect(args.mqtt_broker, port=args.mqtt_port)
    client.loop_start()
    client.subscribe(args.topic_finished)
-   print("Subscribed to tvheadend finished recordings topic... now waiting for recordings...")
-   while not done:
-      # no hurry here its a user-driven interactive workload
-      sleep(10)
+   print(f"Subscribed to {args.topic_finished} topic... now waiting for recordings...")
+   
+   for ssh_host in args.ssh_host.split(','):
+      # run get finished recordings on current target host
+      results = subprocess.run(["ssh", ssh_host, "docker", "exec", "tvheadend-mqtt", "/app/bin/main", "publish", "finished"])
+      print(results)
+      assert results.returncode == 0
+
       # slow process things in main thread one-at-a-time ie. user interaction since not permitted in callback thread
       try:
+         sleep(10)
          while True:
-             r = work_queue.get(block=True, timeout=10) 
-             print(f"Analysing recording {r}")
-             run_work(r, ssh_user=args.ssh_user, ssh_host=args.ssh_host, folder_prefix=args.ssh_folder_prefix, topic_rkmppenc=args.topic_transcode, vbr=args.vbr)
+            r = work_queue.get(block=True, timeout=10) 
+            print(f"Analysing recording {r}")
+            run_work(r, ssh_user=args.ssh_user, ssh_host=ssh_host, folder_prefix=args.ssh_folder_prefix, topic_rkmppenc=args.topic_transcode, vbr=args.vbr)
       except Empty:
          # not done, just nothing reported for now, keep going
-         pass
+         print(f"No more unprocessed recordings for {ssh_host}")
+         continue
    client.loop_stop()
+   print(f"Finished submitted jobs for all hosts {args.ssh_host}... run completed successfully.")
    exit(0)
